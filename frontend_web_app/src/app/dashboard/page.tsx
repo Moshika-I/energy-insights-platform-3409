@@ -33,14 +33,29 @@ function KpiCard({
 }
 
 export default function DashboardPage() {
+  const [tenantId, setTenantId] = React.useState("");
+  const [meterId, setMeterId] = React.useState("");
+
   const summary = useQuery({
-    queryKey: ["analytics", "usage-summary"],
-    queryFn: () => api.getUsageSummary(),
+    queryKey: ["analytics", "usage-summary", tenantId, meterId],
+    queryFn: () => {
+      if (!tenantId || !meterId) {
+        return Promise.reject(new Error("Tenant ID and Meter ID are required"));
+      }
+      return api.getUsageSummary({ tenantId, meterId });
+    },
+    retry: false,
   });
 
   const benchmark = useQuery({
-    queryKey: ["analytics", "benchmarking"],
-    queryFn: () => api.getBenchmarking(),
+    queryKey: ["analytics", "benchmarking", tenantId, meterId],
+    queryFn: () => {
+      if (!tenantId || !meterId) {
+        return Promise.reject(new Error("Tenant ID and Meter ID are required"));
+      }
+      return api.getBenchmarking({ tenantId, meterId });
+    },
+    retry: false,
   });
 
   const errorDetails =
@@ -59,6 +74,29 @@ export default function DashboardPage() {
       title="Dashboard"
       subtitle="Your energy pulse: usage, anomalies, and quick actions."
     >
+      <section className="eip-card" style={{ boxShadow: "none", marginBottom: 12 }}>
+        <div className="eip-card-body" style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontWeight: 900 }}>Scope</div>
+          <div className="eip-grid eip-grid-2">
+            <input
+              className="eip-input"
+              placeholder="Tenant ID (UUID)"
+              value={tenantId}
+              onChange={(e) => setTenantId(e.target.value)}
+            />
+            <input
+              className="eip-input"
+              placeholder="Meter ID (UUID)"
+              value={meterId}
+              onChange={(e) => setMeterId(e.target.value)}
+            />
+          </div>
+          <div className="eip-muted" style={{ fontSize: 12 }}>
+            These IDs are required by the backend API. Create them via the backend OpenAPI docs if needed.
+          </div>
+        </div>
+      </section>
+
       <div className="eip-grid eip-grid-3">
         {summary.isPending ? (
           <>

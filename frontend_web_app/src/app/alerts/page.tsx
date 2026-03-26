@@ -13,9 +13,14 @@ function SeverityBadge({ severity }: { severity: "low" | "medium" | "high" }) {
 }
 
 export default function AlertsPage() {
+  const [tenantId, setTenantId] = React.useState("");
+
   const alerts = useQuery({
-    queryKey: ["alerts"],
-    queryFn: () => api.listAlerts(),
+    queryKey: ["alerts", tenantId],
+    queryFn: () => {
+      if (!tenantId) return Promise.resolve([]);
+      return api.listAlerts({ tenantId });
+    },
   });
 
   const ack = useMutation({
@@ -37,6 +42,21 @@ export default function AlertsPage() {
       title="Alert Center"
       subtitle="Review anomalies, acknowledge incidents, and keep operations steady."
     >
+      <section className="eip-card" style={{ boxShadow: "none", marginBottom: 12 }}>
+        <div className="eip-card-body" style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontWeight: 900 }}>Tenant scope</div>
+          <input
+            className="eip-input"
+            placeholder="Tenant ID (UUID)"
+            value={tenantId}
+            onChange={(e) => setTenantId(e.target.value)}
+          />
+          <div className="eip-muted" style={{ fontSize: 12 }}>
+            Alerts are tenant-scoped. Enter the same Tenant ID used for ingestion/analytics.
+          </div>
+        </div>
+      </section>
+
       {alerts.isPending ? (
         <SkeletonCard rows={10} />
       ) : alerts.isError ? (

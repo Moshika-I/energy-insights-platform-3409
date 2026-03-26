@@ -7,17 +7,48 @@ import { api, ApiError } from "@/lib/api/client";
 import { EmptyState, InlineError, SkeletonCard } from "@/components/ui/AsyncState";
 
 export default function MetersPage() {
+  const [tenantId, setTenantId] = React.useState("");
+  const [meterId, setMeterId] = React.useState("");
   const [file, setFile] = React.useState<File | null>(null);
 
   const meters = useQuery({
-    queryKey: ["meters"],
-    queryFn: () => api.listMeters(),
+    queryKey: ["meters", tenantId],
+    queryFn: () => {
+      if (!tenantId) return Promise.resolve([]);
+      return api.listMeters({ tenantId });
+    },
   });
 
   const upload = useMutation({
     mutationFn: async () => {
+      if (!tenantId) throw new Error("Tenant ID is required");
+      if (!meterId) throw new Error("Meter ID is required");
       if (!file) throw new Error("No file selected");
-      return api.uploadMeterCsv(file);
+
+      // Minimal CSV parser: expects header with reading_at,value OR timestamp,value.
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      if (lines.length < 2) throw new Error("CSV must include header + at least 1 row");
+
+      const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+      const idxAt = header.findIndex((h) => h === "reading_at" || h === "timestamp" || h === "readingat");
+      const idxVal = header.findIndex((h) => h === "value" || h === "kwh" || h === "usage");
+
+      if (idxAt === -1 || idxVal === -1) {
+        throw new Error("CSV header must include reading_at (or timestamp) and value columns");
+      }
+
+      const readings = lines.slice(1).slice(0, 5000).map((line) => {
+        const cols = line.split(",").map((c) => c.trim());
+        const readingAt = cols[idxAt];
+        const value = Number(cols[idxVal]);
+        if (!readingAt || Number.isNaN(value)) {
+          throw new Error(`Invalid row: ${line}`);
+        }
+        return { readingAt, value };
+      });
+
+      return api.ingestReadings({ tenantId, meterId, readings });
     },
     onSuccess: () => {
       setFile(null);
@@ -38,12 +69,25 @@ export default function MetersPage() {
       <div className="eip-grid eip-grid-2">
         <section className="eip-card">
           <div className="eip-card-body">
-            <div style={{ fontWeight: 900 }}>Upload meter CSV</div>
+            <div style={{ fontWeight: 900 }}>Upload meter readings CSV</div>
             <p className="eip-muted" style={{ marginTop: 6 }}>
-              Expected: timestamped readings. We’ll validate and ingest into analytics.
+              Provide tenant + meter IDs, then upload timestamped readings. We’ll ingest into the database.
             </p>
 
             <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              <input
+                className="eip-input"
+                placeholder="Tenant ID (UUID)"
+                value={tenantId}
+                onChange={(e) => setTenantId(e.target.value)}
+              />
+              <input
+                className="eip-input"
+                placeholder="Meter ID (UUID)"
+                value={meterId}
+                onChange={(e) => setMeterId(e.target.value)}
+              />
+
               <input
                 className="eip-input"
                 type="file"
@@ -53,20 +97,20 @@ export default function MetersPage() {
               <button
                 className="eip-btn eip-btn-primary"
                 onClick={() => upload.mutate()}
-                disabled={!file || upload.isPending}
+                disabled={!tenantId || !meterId || !file || upload.isPending}
               >
-                {upload.isPending ? "Uploading…" : "Upload CSV"}
+                {upload.isPending ? "Ingesting…" : "Ingest readings"}
               </button>
               {upload.isError ? (
                 <InlineError
-                  title="Upload failed"
-                  message="Meter upload endpoint is not implemented on the backend yet."
+                  title="Ingestion failed"
+                  message="Check the CSV format and ensure the tenant/meter IDs exist."
                   details={details}
                 />
               ) : null}
               {upload.isSuccess ? (
                 <span className="eip-badge eip-badge-success">
-                  Uploaded (job: {upload.data.jobId})
+                  Inserted {upload.data.inserted} / {upload.data.total} (skipped {upload.data.skipped})
                 </span>
               ) : null}
             </div>
@@ -79,7 +123,7 @@ export default function MetersPage() {
               <div>
                 <div style={{ fontWeight: 900 }}>Meters</div>
                 <div className="eip-muted" style={{ marginTop: 6 }}>
-                  Your configured meters and latest reading timestamp.
+                  Enter a Tenant ID above to load meters and latest reading timestamp.
                 </div>
               </div>
               <button className="eip-btn eip-btn-ghost" onClick={() => meters.refetch()}>
