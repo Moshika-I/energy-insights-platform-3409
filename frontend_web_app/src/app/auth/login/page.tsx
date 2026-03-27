@@ -1,29 +1,36 @@
 "use client";
 
-import React from "react";
+import React, { Suspense } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
-import { api, ApiError } from "@/lib/api/client";
 import { InlineError } from "@/components/ui/AsyncState";
+import { getSupabaseClient } from "@/utils/supabaseClient";
 
-export default function LoginPage() {
+function LoginInner() {
+  const router = useRouter();
+  const params = useSearchParams();
+
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
 
   const login = useMutation({
-    mutationFn: async () => api.login(email, password),
+    mutationFn: async () => {
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      const next = params.get("next") || "/dashboard";
+      router.replace(next.startsWith("/") ? next : "/dashboard");
+    },
   });
 
-  const errorDetails =
-    login.error instanceof ApiError
-      ? `Status: ${login.error.status}\n\n${JSON.stringify(
-          login.error.details,
-          null,
-          2,
-        )}`
-      : login.error
-        ? String(login.error)
-        : undefined;
+  const errorDetails = login.error ? String(login.error.message || login.error) : undefined;
 
   return (
     <main
@@ -90,7 +97,7 @@ export default function LoginPage() {
             <div style={{ marginTop: 14 }}>
               <InlineError
                 title="Unable to sign in"
-                message="The backend auth endpoint is not available yet. This UI is wired and will work once the API is implemented."
+                message="Please check your credentials and try again."
                 details={errorDetails}
               />
             </div>
@@ -104,8 +111,45 @@ export default function LoginPage() {
               Create account
             </Link>
           </div>
+
+          <p className="eip-muted" style={{ marginTop: 14, fontSize: 12 }}>
+            Note: Requires NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to be set.
+          </p>
         </div>
       </section>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <main
+          style={{
+            minHeight: "100vh",
+            display: "grid",
+            placeItems: "center",
+            padding: 18,
+            background:
+              "linear-gradient(135deg, rgba(236,72,153,0.10), rgba(139,92,246,0.10), rgba(59,130,246,0.08))",
+          }}
+        >
+          <section className="eip-card" style={{ maxWidth: 520, width: "100%" }}>
+            <div className="eip-card-body">
+              <span className="eip-kicker">Welcome back</span>
+              <h1 className="eip-h1" style={{ marginTop: 10, fontWeight: 900 }}>
+                Sign in
+              </h1>
+              <p className="eip-muted" style={{ marginTop: 8 }}>
+                Loading…
+              </p>
+            </div>
+          </section>
+        </main>
+      }
+    >
+      <LoginInner />
+    </Suspense>
   );
 }

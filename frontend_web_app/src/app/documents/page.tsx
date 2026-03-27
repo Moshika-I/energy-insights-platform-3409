@@ -6,31 +6,60 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api/client";
 import { EmptyState, InlineError, SkeletonCard } from "@/components/ui/AsyncState";
 
-function StatusBadge({ status }: { status: "processed" | "processing" | "failed" }) {
+type DocumentStatusBadge = "processed" | "processing" | "failed" | "uploaded" | "deleted";
+
+function normalizeDocumentStatus(status: string): DocumentStatusBadge {
+  // Backend schema uses many statuses; the UI compresses into a small set for display.
+  if (status === "processed") return "processed";
+  if (status === "processing") return "processing";
+  if (status === "failed") return "failed";
+  if (status === "deleted") return "deleted";
+  // Default (e.g. "uploaded") and any future statuses render as "uploaded".
+  return "uploaded";
+}
+
+function StatusBadge({ status }: { status: DocumentStatusBadge }) {
   if (status === "processed")
     return <span className="eip-badge eip-badge-success">Processed</span>;
   if (status === "processing")
     return <span className="eip-badge eip-badge-warn">Processing</span>;
+  if (status === "uploaded")
+    return <span className="eip-badge eip-badge-success">Uploaded</span>;
+  if (status === "deleted")
+    return <span className="eip-badge eip-badge-warn">Deleted</span>;
   return <span className="eip-badge eip-badge-error">Failed</span>;
 }
 
 export default function DocumentsPage() {
+  // TODO: When tenant scoping is wired to Supabase Auth, derive tenantId from the user profile/claims.
+  // For now, keep the UI consistent with other pages and let the user input it explicitly.
+  const [tenantId, setTenantId] = React.useState("");
+
   const [file, setFile] = React.useState<File | null>(null);
-  const [tags, setTags] = React.useState<string>("invoice, contract");
+  const [documentType, setDocumentType] = React.useState<
+    "invoice" | "statement" | "contract" | "other" | "unknown"
+  >("invoice");
 
   const docs = useQuery({
-    queryKey: ["documents"],
-    queryFn: () => api.listDocuments(),
+    queryKey: ["documents", tenantId],
+    queryFn: () => {
+      if (!tenantId) return Promise.resolve([]);
+      return api.listDocuments({ tenantId });
+    },
   });
 
   const upload = useMutation({
     mutationFn: async () => {
+      if (!tenantId) throw new Error("Tenant ID is required");
       if (!file) throw new Error("No file selected");
-      const tagList = tags
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
-      return api.uploadDocument(file, tagList);
+
+      // API currently supports documentType but not tags yet (tags are in DB schema; backend can add later).
+      return api.uploadDocument({
+        tenantId,
+        file,
+        documentType,
+        uploadedByUserId: null,
+      });
     },
     onSuccess: () => {
       setFile(null);
@@ -48,6 +77,21 @@ export default function DocumentsPage() {
       title="Documents"
       subtitle="Upload, tag, and manage invoices, contracts, and supporting documents."
     >
+      <section className="eip-card" style={{ boxShadow: "none", marginBottom: 12 }}>
+        <div className="eip-card-body" style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontWeight: 900 }}>Tenant scope</div>
+          <input
+            className="eip-input"
+            placeholder="Tenant ID (UUID)"
+            value={tenantId}
+            onChange={(e) => setTenantId(e.target.value)}
+          />
+          <div className="eip-muted" style={{ fontSize: 12 }}>
+            Documents are tenant-scoped. Enter the same Tenant ID used for ingestion/analytics.
+          </div>
+        </div>
+      </section>
+
       <div className="eip-grid eip-grid-2">
         <section className="eip-card">
           <div className="eip-card-body">
@@ -57,23 +101,40 @@ export default function DocumentsPage() {
             </p>
 
             <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 13, fontWeight: 700 }}>Document type</span>
+                <select
+                  className="eip-select"
+                  value={documentType}
+                  onChange={(e) =>
+                    setDocumentType(
+                      e.target.value as
+                        | "invoice"
+                        | "statement"
+                        | "contract"
+                        | "other"
+                        | "unknown",
+                    )
+                  }
+                >
+                  <option value="invoice">Invoice</option>
+                  <option value="statement">Statement</option>
+                  <option value="contract">Contract</option>
+                  <option value="other">Other</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+              </label>
+
               <input
                 className="eip-input"
                 type="file"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />
-              <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 13, fontWeight: 700 }}>Tags (comma-separated)</span>
-                <input
-                  className="eip-input"
-                  value={tags}
-                  onChange={(e) => setTags(e.target.value)}
-                />
-              </label>
+
               <button
                 className="eip-btn eip-btn-primary"
                 onClick={() => upload.mutate()}
-                disabled={!file || upload.isPending}
+                disabled={!tenantId || !file || upload.isPending}
               >
                 {upload.isPending ? "Uploading…" : "Upload"}
               </button>
@@ -88,7 +149,7 @@ export default function DocumentsPage() {
 
               {upload.isSuccess ? (
                 <span className="eip-badge eip-badge-success">
-                  Uploaded (id: {upload.data.id})
+                  Uploaded (id: {upload.data.document_id})
                 </span>
               ) : null}
             </div>
@@ -126,7 +187,11 @@ export default function DocumentsPage() {
               ) : docs.data.length === 0 ? (
                 <EmptyState
                   title="No documents yet"
-                  description="Upload an invoice or contract to start building your library."
+                  description={
+                    tenantId
+                      ? "Upload an invoice or contract to start building your library."
+                      : "Enter a Tenant ID to load documents."
+                  }
                   tone="primary"
                 />
               ) : (
@@ -137,23 +202,39 @@ export default function DocumentsPage() {
                       className="eip-card"
                       style={{ boxShadow: "none", background: "rgba(255,255,255,0.75)" }}
                     >
-                      <div className="eip-card-body" style={{ display: "flex", gap: 12, justifyContent: "space-between" }}>
+                      <div
+                        className="eip-card-body"
+                        style={{ display: "flex", gap: 12, justifyContent: "space-between" }}
+                      >
                         <div style={{ minWidth: 0 }}>
-                          <div style={{ fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          <div
+                            style={{
+                              fontWeight: 850,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
                             {d.name}
                           </div>
                           <div className="eip-muted" style={{ marginTop: 4, fontSize: 12 }}>
-                            {new Date(d.uploadedAt).toLocaleString()} • Tags:{" "}
-                            {d.tags.join(", ")}
+                            {new Date(d.uploaded_at).toLocaleString()} • Tags:{" "}
+                            {d.tags.length ? d.tags.join(", ") : "—"}
                           </div>
                         </div>
-                        <StatusBadge status={d.status} />
+                        <StatusBadge status={normalizeDocumentStatus(d.status)} />
                       </div>
                     </div>
                   ))}
                 </div>
               )}
             </div>
+
+            {!tenantId ? (
+              <div className="eip-muted" style={{ marginTop: 10, fontSize: 12 }}>
+                Tip: enter a Tenant ID above to load documents.
+              </div>
+            ) : null}
           </div>
         </section>
       </div>

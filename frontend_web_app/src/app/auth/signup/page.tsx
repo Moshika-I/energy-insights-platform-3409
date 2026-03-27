@@ -3,27 +3,33 @@
 import React from "react";
 import Link from "next/link";
 import { useMutation } from "@tanstack/react-query";
-import { api, ApiError } from "@/lib/api/client";
 import { InlineError } from "@/components/ui/AsyncState";
+import { getSupabaseClient } from "@/utils/supabaseClient";
+import { getURL } from "@/utils/getURL";
 
 export default function SignupPage() {
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
 
   const signup = useMutation({
-    mutationFn: async () => api.signup(email, password),
+    mutationFn: async () => {
+      const supabase = getSupabaseClient();
+      const emailRedirectTo = `${getURL()}auth/callback`;
+
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo,
+        },
+      });
+
+      if (error) throw error;
+      return data;
+    },
   });
 
-  const errorDetails =
-    signup.error instanceof ApiError
-      ? `Status: ${signup.error.status}\n\n${JSON.stringify(
-          signup.error.details,
-          null,
-          2,
-        )}`
-      : signup.error
-        ? String(signup.error)
-        : undefined;
+  const errorDetails = signup.error ? String(signup.error.message || signup.error) : undefined;
 
   return (
     <main
@@ -86,11 +92,19 @@ export default function SignupPage() {
             </button>
           </form>
 
+          {signup.isSuccess ? (
+            <div style={{ marginTop: 14 }}>
+              <span className="eip-badge eip-badge-success">
+                Account created. Check your email to confirm and finish sign-in.
+              </span>
+            </div>
+          ) : null}
+
           {signup.isError ? (
             <div style={{ marginTop: 14 }}>
               <InlineError
                 title="Unable to create account"
-                message="The backend signup endpoint is not available yet. This UI is wired and will work once the API is implemented."
+                message="Please verify your email and password meet the requirements."
                 details={errorDetails}
               />
             </div>
@@ -104,6 +118,11 @@ export default function SignupPage() {
               Continue to dashboard
             </Link>
           </div>
+
+          <p className="eip-muted" style={{ marginTop: 14, fontSize: 12 }}>
+            Email confirmations redirect to <code>/auth/callback</code>. Ensure Supabase Auth URL allowlist
+            includes your site URL and callback path.
+          </p>
         </div>
       </section>
     </main>

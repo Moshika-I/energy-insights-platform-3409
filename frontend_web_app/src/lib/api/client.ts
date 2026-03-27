@@ -53,7 +53,8 @@ async function readJsonSafe(res: Response) {
 async function request<T>(
   path: string,
   options: RequestInit,
-  schema?: z.ZodType<T>,
+  // Allow schemas that transform or default values: input type may differ from output type T.
+  schema?: z.ZodType<T, z.ZodTypeDef, unknown>,
 ): Promise<T> {
   const url = joinUrl(envBase || "", path);
 
@@ -262,14 +263,23 @@ export const api = {
       granularity: payload.granularity ?? "daily",
     };
 
-    const schema = z.object({
-      id: z.string(),
-      output_type: z.string(),
-      score: z.number().nullable().optional(),
-      output: z.record(z.unknown()),
-    });
+    // Ensure 'score' is always present (nullable) so the function's return type is stable.
+    // Some backend versions may omit it; accept that on input and normalize to null.
+    const schema = z
+      .object({
+        id: z.string(),
+        output_type: z.string(),
+        score: z.number().nullable().optional(),
+        output: z.record(z.unknown()),
+      })
+      .transform((v) => ({ ...v, score: v.score ?? null }));
 
-    return request(
+    return request<{
+      id: string;
+      output_type: string;
+      score: number | null;
+      output: Record<string, unknown>;
+    }>(
       "/orchestration/analyze",
       { method: "POST", body: JSON.stringify(body) },
       schema,

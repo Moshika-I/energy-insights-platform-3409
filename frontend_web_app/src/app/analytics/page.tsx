@@ -9,7 +9,10 @@ import { EmptyState, SkeletonCard } from "@/components/ui/AsyncState";
 export default function AnalyticsPage() {
   const summary = useQuery({
     queryKey: ["analytics", "usage-summary"],
-    queryFn: () => api.getUsageSummary(),
+    // These endpoints require tenant + meter IDs. This screen is a placeholder, so we
+    // deliberately call with empty IDs and rely on the existing error/empty-state UX.
+    queryFn: () => api.getUsageSummary({ tenantId: "", meterId: "" }),
+    retry: false,
   });
 
   return (

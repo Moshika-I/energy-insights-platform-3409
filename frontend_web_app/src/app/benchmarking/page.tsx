@@ -9,7 +9,10 @@ import { EmptyState, SkeletonCard } from "@/components/ui/AsyncState";
 export default function BenchmarkingPage() {
   const benchmarking = useQuery({
     queryKey: ["analytics", "benchmarking"],
-    queryFn: () => api.getBenchmarking(),
+    // Requires tenant + meter IDs; placeholder screen uses empty IDs and shows
+    // the already-implemented error state.
+    queryFn: () => api.getBenchmarking({ tenantId: "", meterId: "" }),
+    retry: false,
   });
 
   return (
